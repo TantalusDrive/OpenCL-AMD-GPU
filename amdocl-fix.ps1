@@ -181,3 +181,5 @@ if ($hadErrors) {
 } else {
     Write-Host "`nCompleted successfully." -ForegroundColor Green
 }
+
+Read-Host "Press Enter to exit"
