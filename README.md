@@ -28,7 +28,8 @@ It will scan your system for *OpenCL Installable Client Driver (ICD)* files by A
      ```
 
 ## Compatibility
-- Windows 7, 8, 8.1, 10, 11: fully supported  
+- Windows 10, 11: fully supported
+- Windows 7, 8, 8.1: batch script fully supported; PowerShell script (`amdocl-fix.ps1`) requires PowerShell 5.1 or newer
 - Windows XP / Vista: script runs safely, but OpenCL drivers may not be present  
 The script ensures proper detection and registration of AMD OpenCL drivers on Windows, including handling SysWOW64, scanning the PATH safely, registering versioned DLLs, and avoiding duplicate entries.
 
