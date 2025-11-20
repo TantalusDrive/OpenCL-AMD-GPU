@@ -9,11 +9,30 @@ It will scan your system for *OpenCL Installable Client Driver (ICD)* files by A
 - amdocl12cl64.dll
 - amdocl32.dll
 - amdocl64.dll
+- versioned variants (e.g. amdocl_*.dll, amdocl64_*.dll)
 
 ## Usage
 1. Make sure to have the latest [AMD drivers](https://www.amd.com/en/support) installed
 2. Download and execute `amdocl.bat`
 3. Run the file as **Administrator** (Right click file and select `Run as Administrator`)
+
+## PowerShell version
+A new PowerShell script (`amdocl-fix.ps1`) extends the batch version with additional features.
+
+### How to run
+1. Download `amdocl-fix.ps1` and place it in a folder of your choice.
+2. Make sure to run it as **Administrator**:
+   - Right‑click the file → **Run with PowerShell** → confirm the UAC prompt.
+   - Alternatively, open PowerShell as Administrator and run:
+     ```powershell
+     cd "C:\path\to\folder"
+     .\amdocl-fix.ps1
+     ```
+
+## Compatibility
+- Windows 7, 8, 8.1, 10, 11: fully supported  
+- Windows XP / Vista: script runs safely, but OpenCL drivers may not be present  
+The script also includes improvements such as handling SysWOW64, safer PATH scanning, clean output when registry keys are missing, correct handling of versioned DLLs, and avoiding duplicate entries
 
 ## Notes
 Inspired by StackOverflow https://stackoverflow.com/a/28407851
@@ -21,3 +40,4 @@ Inspired by StackOverflow https://stackoverflow.com/a/28407851
 ---
 
 © 2023 [Patrick Trumpis](https://github.com/ptrumpis)
+© 2025 [TantalusDrive](https://github.com/TantalusDrive) (Additional improvements and PowerShell version)
