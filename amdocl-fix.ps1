@@ -1,4 +1,4 @@
-# PowerShell script to detect and register AMD OpenCL ICDs
+# PowerShell script to manage and fix AMD OpenCL ICDs
 #
 # Original batch concept: Patrick Trumpis (https://github.com/ptrumpis/OpenCL-AMD-GPU)
 # PowerShell implementation and extensions: TantalusDrive (https://github.com/TantalusDrive)
@@ -6,49 +6,48 @@
 # Licensed under the MIT License.
 # See LICENSE file in the repository root for full terms.
 #
-# This script builds upon the original batch solution by providing
-# a more flexible and robust implementation in PowerShell. It is
-# designed to improve detection and registration of AMD OpenCL ICDs
-# across different environments, while keeping the process transparent
-# and maintainable.
-#
-# Features:
-# - Support for versioned DLLs (e.g. amdocl64_*.dll)
-# - SysWOW64 registry handling for 32/64-bit consistency
-# - PATH scan to locate hidden or unregistered drivers
-# - Prevention of duplicate registry entries
-# - Cleaner output and improved error handling
+# This PowerShell script extends the original batch by safely cleaning up
+# invalid or misplaced registry entries and coherently registering AMD
+# OpenCL DLLs in the correct 32-bit or 64-bit hive, and providing detailed status output.
+# By default, unsigned DLLs are allowed to prevent accidental removal.
 #
 # Tested on a couple of dated AMD GPUs (R5 M330, R5 M430), feedback and contributions are welcome.
 
-
-
-# Run as Administrator
-$roots = @(
-    "HKLM:\SOFTWARE\Khronos\OpenCL\Vendors",            # 64-bit
-    "HKLM:\SOFTWARE\WOW6432Node\Khronos\OpenCL\Vendors" # 32-bit
+param(
+    [switch]$AllowUnsigned = $true
 )
 
-# Directories to scan (more complete than just System32)
+# AMD OpenCL registry hives
+$roots = @(
+    "HKLM:\SOFTWARE\Khronos\OpenCL\Vendors",        # 64-bit
+    "HKLM:\SOFTWARE\WOW6432Node\Khronos\OpenCL\Vendors"  # 32-bit
+)
+
+# Standard AMD directories scanned for OpenCL ICDs
 $scanDirs = @(
     "$env:WINDIR\System32",
     "$env:WINDIR\SysWOW64",
     "$env:WINDIR\System32\DriverStore\FileRepository"
 )
 
-# Error flag
 $hadErrors = $false
 
 function Get-DllBitness {
     param([string]$Path)
     try {
-        $fs = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)
+        $fs = [System.IO.File]::Open($Path, 'Open', 'Read', 'Read')
         $br = New-Object System.IO.BinaryReader($fs)
+
+        # Read PE header offset
         $fs.Seek(0x3C, 'Begin') | Out-Null
         $peOffset = $br.ReadInt32()
+
+        # Read machine field
         $fs.Seek($peOffset + 4, 'Begin') | Out-Null
         $machine = $br.ReadUInt16()
+
         $br.Close(); $fs.Close()
+
         switch ($machine) {
             0x8664 { return 64 } # AMD64
             0x014C { return 32 } # I386
@@ -57,110 +56,128 @@ function Get-DllBitness {
     } catch { return $null }
 }
 
-function Safe-RemoveItemProperty {
-    param($Path,$Name)
+function Safe-Remove {
+    param($root,$name)
     try {
-        Remove-ItemProperty -Path $Path -Name $Name -Force
-    } catch {
-        Write-Host "Warning: failed to remove $Name" -ForegroundColor Yellow
-        $global:hadErrors = $true
-    }
+        Remove-ItemProperty -Path $root -Name $name -Force
+    } catch { $global:hadErrors = $true }
 }
 
-function Safe-NewItemProperty {
-    param($Path,$Name,$Value)
+function Safe-Add {
+    param($root,$name)
     try {
-        New-ItemProperty -Path $Path -Name $Name -Value $Value -PropertyType DWord -Force | Out-Null
-    } catch {
-        Write-Host "Warning: failed to register $Name" -ForegroundColor Yellow
-        $global:hadErrors = $true
+        New-ItemProperty -Path $root -Name $name -Value 0 -PropertyType DWord -Force | Out-Null
+    } catch { $global:hadErrors = $true }
+}
+
+function Is-SignatureAcceptable {
+    param($sig, $AllowUnsigned)
+
+    if ($sig.Status -eq 'Valid') { return $true }
+    if ($AllowUnsigned -and ($sig.Status -eq 'NotSigned' -or $sig.Status -eq 'Unknown')) {
+        return $true
     }
+    return $false
 }
 
 function Register-OpenCLDLL {
-    param (
-        [string]$dllPath
-    )
+    param([string]$dllPath, [switch]$AllowUnsigned)
+
     if (-not (Test-Path $dllPath)) { return }
 
-    $sig = Get-AuthenticodeSignature $dllPath
-    if ($sig.Status -ne 'Valid') { return }
+    $sig = Get-AuthenticodeSignature -FilePath $dllPath
+    if (-not (Is-SignatureAcceptable $sig $AllowUnsigned)) { return }
 
-    $bit = Get-DllBitness -Path $dllPath
-    if ($bit -eq 64) {
-        $rootKey = $roots[0]
-    } elseif ($bit -eq 32) {
-        $rootKey = $roots[1]
-    } else {
-        return
-    }
+    $bit = Get-DllBitness $dllPath
+    if ($bit -eq 64)      { $root = $roots[0] }
+    elseif ($bit -eq 32) { $root = $roots[1] }
+    else                 { return }
 
-    $exists = (Get-ItemProperty -Path $rootKey -ErrorAction SilentlyContinue).PSObject.Properties.Name -contains $dllPath
+    $exists = (Get-ItemProperty -Path $root -ErrorAction SilentlyContinue).PSObject.Properties |
+              Where-Object { $_.Name -eq $dllPath }
+
     if (-not $exists) {
-        Safe-NewItemProperty $rootKey $dllPath 0
+        Safe-Add $root $dllPath
         Write-Host "Added ($bit-bit): $dllPath" -ForegroundColor Cyan
     }
 }
 
-# 1) Cleanup
+# ----------------------------------------------------------
+# 1) SAFE CLEANUP
+# ----------------------------------------------------------
+
 foreach ($root in $roots) {
+
     Write-Host "`nAnalyzing: $root" -ForegroundColor Cyan
+
     $entries = Get-ItemProperty -Path $root -ErrorAction SilentlyContinue
-    if ($entries) {
-        foreach ($property in $entries.PSObject.Properties) {
-            $dllPath = $property.Name
-            if ($dllPath -notlike "*amdocl*.dll") { continue }
+    if (-not $entries) {
+        Write-Host "No entries found or key missing."
+        continue
+    }
 
-            if (-not (Test-Path $dllPath)) {
-                Write-Host "Removed: $dllPath (missing file)" -ForegroundColor Red
-                Safe-RemoveItemProperty $root $dllPath
-                continue
-            }
+    foreach ($prop in $entries.PSObject.Properties) {
 
-            $sig = Get-AuthenticodeSignature $dllPath
-            if ($sig.Status -ne 'Valid') {
-                Write-Host "Removed: $dllPath (invalid signature)" -ForegroundColor Red
-                Safe-RemoveItemProperty $root $dllPath
-                continue
-            }
+        $dll = $prop.Name
+        if ($dll -notlike "*amdocl*.dll") { continue }
 
-            # Move if registered under the wrong hive
-            $bit = Get-DllBitness -Path $dllPath
-            $shouldRoot = if ($bit -eq 64) { $roots[0] } elseif ($bit -eq 32) { $roots[1] } else { $null }
-            if ($shouldRoot -and ($root -ne $shouldRoot)) {
-                if (-not (Test-Path $shouldRoot)) {
-                    Write-Host "Warning: destination hive not found, skipping $dllPath" -ForegroundColor Yellow
-                    continue
-                }
-                Write-Host "Moving ($bit-bit) from wrong hive: $dllPath" -ForegroundColor Yellow
-                Safe-RemoveItemProperty $root $dllPath
-                $existsDest = (Get-ItemProperty -Path $shouldRoot -ErrorAction SilentlyContinue).PSObject.Properties.Name -contains $dllPath
-                if (-not $existsDest) {
-                    Safe-NewItemProperty $shouldRoot $dllPath 0
-                }
-            } else {
-                Write-Host "OK: $dllPath" -ForegroundColor Green
-            }
+        if (-not (Test-Path $dll)) {
+            Write-Host "Removed: $dll (file missing)" -ForegroundColor Yellow
+            Safe-Remove $root $dll
+            continue
         }
-    } else {
-        Write-Host "Key not found or empty." -ForegroundColor Yellow
+
+        $sig = Get-AuthenticodeSignature -FilePath $dll
+        if (-not (Is-SignatureAcceptable $sig $AllowUnsigned)) {
+            Write-Host "Removed: $dll (invalid signature)" -ForegroundColor Yellow
+            Safe-Remove $root $dll
+            continue
+        }
+
+        $bit = Get-DllBitness $dll
+        if ($bit -eq $null) {
+            Write-Host "Removed: $dll (bitness not detectable)" -ForegroundColor Yellow
+            Safe-Remove $root $dll
+            continue
+        }
+
+        $correctRoot = if ($bit -eq 64) { $roots[0] } else { $roots[1] }
+
+        if ($correctRoot -ne $root) {
+            Write-Host "Fixed hive mismatch ($bit-bit): $dll" -ForegroundColor Yellow
+            Safe-Remove $root $dll
+
+            $existsDest = (Get-ItemProperty -Path $correctRoot -ErrorAction SilentlyContinue).PSObject.Properties |
+                          Where-Object { $_.Name -eq $dll }
+
+            if (-not $existsDest) {
+                Safe-Add $correctRoot $dll
+            }
+            continue
+        }
+
+        Write-Host "OK: $dll" -ForegroundColor Green
     }
 }
 
-# 2) Rebuild from common locations (avoids duplicates, respects bitness)
-Write-Host "`nRebuilding missing entries..." -ForegroundColor Cyan
+# ----------------------------------------------------------
+# 2) COHERENT REBUILD (improved)
+# ----------------------------------------------------------
+
+Write-Host "`nRebuilding..." -ForegroundColor Cyan
+
 foreach ($dir in $scanDirs) {
     if (-not (Test-Path $dir)) { continue }
+
     Get-ChildItem -Path $dir -Filter "amdocl*.dll" -Recurse -ErrorAction SilentlyContinue |
         Sort-Object { $_.VersionInfo.FileVersionRaw } -Descending -ErrorAction SilentlyContinue |
         ForEach-Object {
-            Register-OpenCLDLL -dllPath $_.FullName
+            Register-OpenCLDLL -dllPath $_.FullName -AllowUnsigned:$AllowUnsigned
         }
 }
 
-# Final message
 if ($hadErrors) {
-    Write-Host "`nScript finished with warnings or errors." -ForegroundColor Yellow
+    Write-Host "`nCompleted with warnings." -ForegroundColor Yellow
 } else {
-    Write-Host "`nScript finished successfully." -ForegroundColor Green
+    Write-Host "`nCompleted successfully." -ForegroundColor Green
 }
