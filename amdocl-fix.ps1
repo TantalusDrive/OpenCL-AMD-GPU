@@ -1,3 +1,28 @@
+# PowerShell script to detect and register AMD OpenCL ICDs
+#
+# Original batch concept: Patrick Trumpis (https://github.com/ptrumpis/OpenCL-AMD-GPU)
+# PowerShell implementation and extensions: TantalusDrive (https://github.com/TantalusDrive)
+#
+# Licensed under the MIT License.
+# See LICENSE file in the repository root for full terms.
+#
+# This script builds upon the original batch solution by providing
+# a more flexible and robust implementation in PowerShell. It is
+# designed to improve detection and registration of AMD OpenCL ICDs
+# across different environments, while keeping the process transparent
+# and maintainable.
+#
+# Features:
+# - Support for versioned DLLs (e.g. amdocl64_*.dll)
+# - SysWOW64 registry handling for 32/64-bit consistency
+# - PATH scan to locate hidden or unregistered drivers
+# - Prevention of duplicate registry entries
+# - Cleaner output and improved error handling
+#
+# Tested on a couple of dated AMD GPUs (R5 M330, R5 M430), feedback and contributions are welcome.
+
+
+
 # Run as Administrator
 $roots = @(
     "HKLM:\SOFTWARE\Khronos\OpenCL\Vendors",            # 64-bit
