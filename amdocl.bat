@@ -3,17 +3,16 @@ cls
 echo OpenCL Driver (ICD) Fix for AMD GPUs
 echo Original work by Patrick Trumpis (https://github.com/ptrumpis/OpenCL-AMD-GPU)
 echo Improvements by TantalusDrive (https://github.com/TantalusDrive)
-REM SysWOW64 handling, PATH scan, versioned DLLs, duplicate prevention
+echo SysWOW64 handling, PATH scan, versioned DLLs, duplicate prevention
 echo Inspired by https://stackoverflow.com/a/28407851
-echo:
-echo:
+echo.
+echo.
 
 REM ============================================================
 REM Privilege check
 REM ============================================================
 net session >nul 2>&1
 if %errorlevel% neq 0 goto :noAdmin
-
 goto :continue
 
 :noAdmin
@@ -29,20 +28,16 @@ exit /b 1
 
 :continue
 
-
 REM ============================================================
 REM Check Windows version (Vista+ required for registry backup)
 REM ============================================================
 for /f "tokens=4 delims=. " %%v in ('ver') do set WINVER=%%v
+if not defined WINVER set WINVER=10
 if %WINVER% lss 6 (
     echo WARNING: Automatic registry backup not supported before Windows Vista.
     set "REGBKOK=0"
 ) else (
-    REM ========================================================
-    REM Check automatic registry backup (EnablePeriodicBackup DWORD)
-    REM ========================================================
     set "REGBKOK=0"
-
     reg query "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Configuration Manager" >nul 2>&1
     if errorlevel 1 (
         echo WARNING: Configuration Manager key missing. SAFE mode enforced.
@@ -50,7 +45,6 @@ if %WINVER% lss 6 (
     ) else (
         reg query "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Configuration Manager" /v EnablePeriodicBackup >nul 2>&1
         if %errorlevel% equ 0 (
-            REM check if value is 0x0 (disabled) otherwise consider enabled
             reg query "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Configuration Manager" /v EnablePeriodicBackup | findstr /I "0x0" >nul 2>&1
             if %errorlevel%==0 (
                 set "REGBKOK=0"
@@ -77,7 +71,11 @@ if %WINVER% lss 6 (
         )
     )
 
-    if %REGBKOK%==1 (echo Registry backup active.) else (echo Registry backup inactive, SAFE mode.)
+    if %REGBKOK%==1 (
+        echo Registry backup active.
+    ) else (
+        echo Registry backup inactive, SAFE mode.
+    )
 )
 
 REM ============================================================
@@ -93,65 +91,61 @@ echo ==================================================
 reg query %ROOTKEY64% >nul 2>&1 && (
     for /f "tokens=1,*" %%A in ('reg query %ROOTKEY64%') do echo %%A - %%B
 ) || echo (none)
-echo:
+echo.
 echo Currently installed OpenCL Client Drivers - 32bit
 echo ==================================================
 reg query %ROOTKEY32% >nul 2>&1 && (
     for /f "tokens=1,*" %%A in ('reg query %ROOTKEY32%') do echo %%A - %%B
 ) || echo (none)
-echo:
+echo.
 
-REM This script will now attempt to find and install unregistered OpenCL AMD drivers (Fast Scan).
+REM Prompt to continue
 set "INPUT="
 set /P "INPUT=Do you want to continue? (Y/N): "
-if /I "!INPUT!"=="Y" (
-    echo:
-) else (
-    goto :exit
-)
+if /I "%INPUT%" neq "Y" goto :exit
+echo.
 
 REM ============================================================
 REM Fast Scan - standard directories (recursive registration)
 REM ============================================================
 echo Running AMD OpenCL Driver Auto Detection
 echo ========================================
-echo:
-
+echo.
 for %%D in ("%SYSTEMROOT%\System32" "%SYSTEMROOT%\SysWOW64") do (
     if exist "%%~D" (
         echo Scanning '%%~D' for 'amdocl*.dll' files, please wait...
         pushd "%%~D"
         call :registerMissingClientDriver
         popd
-        echo:
+        echo.
     )
 )
-
 echo Fast Scan complete.
-echo:
+echo.
+
+REM Prompt for full PATH scan
 set "INPUT="
 set /P "INPUT=Do you want to perform a Full PATH scan? (Y/N): "
-if /I not "%INPUT%"=="Y" goto :complete
+if /I "%INPUT%" neq "Y" goto :complete
+echo.
 
-echo:
+REM ============================================================
+REM Full PATH scan
+REM ============================================================
 echo Now scanning PATH for 'amdocl*.dll' files...
-echo:
-
-for %%A in ("%PATH:;=";"%") do (
-    if "%%~A" neq "" (
-        if exist "%%~A\" (
-            pushd "%%~A" >nul 2>&1
-            if !ERRORLEVEL! == 0 (
-                call :registerMissingClientDriver
-                popd
-            )
+echo.
+for %%A in (%PATH%) do (
+    if exist "%%A" (
+        pushd "%%A" >nul 2>&1
+        if !ERRORLEVEL! == 0 (
+            call :registerMissingClientDriver
+            popd
         )
     )
 )
-
-echo:
+echo.
 echo Full Scan complete.
-echo:
+echo.
 
 :complete
 echo Done.
@@ -159,9 +153,7 @@ pause
 goto :exit
 
 REM ============================================================
-REM Register missing client drivers (non-destructive)
-REM - recursive search, whitelist + versioned variants, diagnostics
-REM - skips destructive operations if registry backup not active
+REM Register missing client drivers
 REM ============================================================
 :registerMissingClientDriver
 for /r %%f in (amdocl*.dll) do (
@@ -200,10 +192,10 @@ for /r %%f in (amdocl*.dll) do (
             )
         )
 
-        REM Ensure root key exists (with diagnostic)
-        reg query !ROOTKEY! >nul 2>&1
+        REM Ensure root key exists
+        reg query "!ROOTKEY!" >nul 2>&1
         if !ERRORLEVEL! neq 0 (
-            reg add !ROOTKEY! /f >nul 2>&1
+            reg add "!ROOTKEY!" /f >nul 2>&1
             if !ERRORLEVEL! == 0 (
                 echo Added Key: !ROOTKEY!
             ) else (
@@ -213,9 +205,9 @@ for /r %%f in (amdocl*.dll) do (
 
         REM Register DLL if missing (respect SAFE gating)
         if "!REGBKOK!"=="1" (
-            reg query !ROOTKEY! /v "!FILE!" >nul 2>&1
+            reg query "!ROOTKEY!" /v "!FILE!" >nul 2>&1
             if !ERRORLEVEL! neq 0 (
-                reg add !ROOTKEY! /v "!FILE!" /t REG_DWORD /d 0 /f >nul 2>&1
+                reg add "!ROOTKEY!" /v "!FILE!" /t REG_DWORD /d 0 /f >nul 2>&1
                 if !ERRORLEVEL! == 0 (
                     echo Registered: !FILE!
                 ) else (
@@ -228,7 +220,6 @@ for /r %%f in (amdocl*.dll) do (
             echo SAFE mode: registry modification skipped for !FILE! (backup not active)
         )
     )
-    REM Reset VALID for next iteration
     set "VALID="
 )
 goto :eof
