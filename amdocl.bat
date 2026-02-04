@@ -11,14 +11,24 @@ echo:
 REM ============================================================
 REM Privilege check
 REM ============================================================
-whoami /groups | find "S-1-5-32-544" >nul 2>&1
-if errorlevel 1 (
-    echo Execution stopped
-    echo =================
-    echo This script requires administrator rights.
-    pause
-    exit /b 1
-)
+net session >nul 2>&1
+if %errorlevel% neq 0 goto :noAdmin
+
+goto :continue
+
+:noAdmin
+echo.
+echo Execution stopped
+echo =================
+echo This script requires administrator rights.
+echo Please run it again as administrator.
+echo You can right click the file and select 'Run as administrator'
+echo.
+pause
+exit /b 1
+
+:continue
+
 
 REM ============================================================
 REM Check Windows version (Vista+ required for registry backup)
