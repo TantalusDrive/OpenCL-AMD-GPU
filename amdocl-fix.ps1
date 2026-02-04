@@ -17,29 +17,24 @@
 #
 # Tested on older AMD GPUs (R5 M330, R5 M430). Feedback and contributions are welcome.
 
+
 param(
     [switch]$AllowUnsigned = $true
 )
 
+Write-Host "AMD OpenCL ICD Fix (PowerShell Edition)"
+Write-Host "====================================="
+Write-Host ""
+
 # -------------------------
 # Configuration
 # -------------------------
-$roots = @{
+$Roots = @{
     64 = "HKLM:\SOFTWARE\Khronos\OpenCL\Vendors"
     32 = "HKLM:\SOFTWARE\WOW6432Node\Khronos\OpenCL\Vendors"
 }
 
-# Normalize registry roots defensively (avoid null/empty paths)
-$NormalizedRoots = @{}
-foreach ($k in $roots.Keys) {
-    $v = $roots[$k]
-    if (-not [string]::IsNullOrWhiteSpace($v)) {
-        $NormalizedRoots[$k] = $v
-    }
-}
-$roots = $NormalizedRoots
-
-$scanDirs = @(
+$ScanDirs = @(
     "$env:WINDIR\System32",
     "$env:WINDIR\SysWOW64",
     "$env:WINDIR\System32\DriverStore\FileRepository"
@@ -55,60 +50,41 @@ function Test-IsAdmin {
 }
 
 function Test-RegistryBackupEnabled {
-    $windir = $env:WINDIR
-    if (-not $windir) { return $false }
-
-    $regBackPath = Join-Path $windir "System32\config\RegBack"
-    if (Test-Path $regBackPath) {
-        $expected = @('SAM','SECURITY','SOFTWARE','SYSTEM','DEFAULT')
-        try {
-            foreach ($name in $expected) {
-                $f = Join-Path $regBackPath $name
-                if (-not (Test-Path $f)) { return $false }
-                if ((Get-Item $f -ErrorAction SilentlyContinue).Length -le 0) { return $false }
-            }
-            return $true
-        } catch { }
+    $regBack = Join-Path $env:WINDIR "System32\config\RegBack"
+    if (Test-Path $regBack) {
+        foreach ($hive in 'SAM','SECURITY','SOFTWARE','SYSTEM','DEFAULT') {
+            $f = Join-Path $regBack $hive
+            if (-not (Test-Path $f)) { return $false }
+            if ((Get-Item $f).Length -le 0) { return $false }
+        }
+        return $true
     }
 
     try {
-        if (Get-ScheduledTask -TaskName 'RegIdleBackup' -ErrorAction SilentlyContinue) { return $true }
-        if (Get-ScheduledTask -TaskPath "\Microsoft\Windows\Registry\" -ErrorAction SilentlyContinue |
-            Where-Object { $_.TaskName -eq 'RegIdleBackup' }) { return $true }
-    } catch { }
-
-    return $false
+        return [bool](Get-ScheduledTask -TaskName RegIdleBackup -ErrorAction SilentlyContinue)
+    } catch {
+        return $false
+    }
 }
 
 function Try-EnableRegistryBackup {
-    if (-not (Test-IsAdmin)) {
-        Write-Host "Administrator privileges required to enable registry backups automatically." -ForegroundColor Yellow
+    Write-Host "Attempting to enable automatic registry backup..."
+    try {
+        $cfg = "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Configuration Manager"
+        if (-not (Test-Path $cfg)) {
+            New-Item -Path (Split-Path $cfg) -Name "Configuration Manager" -Force | Out-Null
+        }
+        New-ItemProperty -Path $cfg -Name EnablePeriodicBackup -Value 1 -PropertyType DWord -Force | Out-Null
+    } catch {
+        Write-Host "Failed to configure registry backup." -ForegroundColor Yellow
         return $false
     }
 
     try {
-        $cfgKey = "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Configuration Manager"
-        if (-not (Test-Path $cfgKey)) {
-            New-Item -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager" `
-                     -Name "Configuration Manager" -Force | Out-Null
-        }
-        New-ItemProperty -Path $cfgKey -Name "EnablePeriodicBackup" `
-                         -PropertyType DWord -Value 1 -Force | Out-Null
-        Write-Host "Set EnablePeriodicBackup = 1 (attempted)." -ForegroundColor Cyan
-    } catch {
-        Write-Host "Failed to set EnablePeriodicBackup." -ForegroundColor Yellow
-    }
-
-    try {
-        $task = Get-ScheduledTask -TaskName 'RegIdleBackup' -ErrorAction SilentlyContinue
-        if (-not $task) {
-            $task = Get-ScheduledTask -TaskPath "\Microsoft\Windows\Registry\" -ErrorAction SilentlyContinue |
-                    Where-Object { $_.TaskName -eq 'RegIdleBackup' }
-        }
+        $task = Get-ScheduledTask -TaskName RegIdleBackup -ErrorAction SilentlyContinue
         if ($task) {
-            Enable-ScheduledTask -InputObject $task -ErrorAction SilentlyContinue
-            Start-ScheduledTask  -InputObject $task -ErrorAction SilentlyContinue
-            Write-Host "Triggered RegIdleBackup scheduled task." -ForegroundColor Cyan
+            Enable-ScheduledTask $task | Out-Null
+            Start-ScheduledTask  $task | Out-Null
         }
     } catch { }
 
@@ -118,123 +94,131 @@ function Try-EnableRegistryBackup {
 
 function Get-DllBitness {
     param([string]$Path)
+
+    $fs = $null
+    $br = $null
     try {
         $fs = [IO.File]::Open($Path,'Open','Read','Read')
         $br = New-Object IO.BinaryReader($fs)
         $fs.Seek(0x3C,'Begin') | Out-Null
         $pe = $br.ReadInt32()
         $fs.Seek($pe + 4,'Begin') | Out-Null
-        $m = $br.ReadUInt16()
-        $br.Close(); $fs.Close()
-        switch ($m) {
+        switch ($br.ReadUInt16()) {
             0x8664 { 64 }
             0x014C { 32 }
             default { $null }
         }
-    } catch { $null }
+    } catch {
+        $null
+    } finally {
+        if ($br) { $br.Dispose() }
+        if ($fs) { $fs.Dispose() }
+    }
 }
 
 function Is-AcceptableSignature {
-    param($sig)
-    if (-not $sig) { return $false }
-    if ($sig.Status -eq 'Valid') { return $true }
-    if ($AllowUnsigned -and $sig.Status -in 'NotSigned','Unknown') { return $true }
+    param($Sig)
+    if (-not $Sig) { return $false }
+    if ($Sig.Status -eq 'Valid') { return $true }
+    if ($AllowUnsigned -and $Sig.Status -in 'NotSigned','Unknown') { return $true }
     return $false
 }
 
 function Ensure-Registry {
-    param($bit,$dll)
+    param($Bit,$DllPath)
 
-    $root = $roots[$bit.ToString()]
-    if ([string]::IsNullOrWhiteSpace($root)) { return }
+    $Root = $Roots[$Bit]
+    if (-not $Root) { return }
 
-    if (-not (Test-Path $root)) {
-        try {
-            New-Item -Path $root -Force | Out-Null
-        } catch {
-            Write-Host "Failed to create registry root: $root" -ForegroundColor Yellow
-            return
-        }
+    if (-not (Test-Path $Root)) {
+        New-Item -Path $Root -Force | Out-Null
+        Write-Host "Created registry key: $Root"
     }
 
-    if (-not (Get-ItemProperty -Path $root -Name $dll -ErrorAction SilentlyContinue)) {
-        New-ItemProperty -Path $root -Name $dll -Value 0 -PropertyType DWord -Force | Out-Null
-        Write-Host "[+ $bit bit] Registered: $dll" -ForegroundColor Cyan
+    if (-not (Get-ItemPropertyValue -Path $Root -Name $DllPath -ErrorAction SilentlyContinue)) {
+        New-ItemProperty -Path $Root -Name $DllPath -Value 0 -PropertyType DWord -Force | Out-Null
+        Write-Host "[+ $Bit-bit] Registered: $DllPath" -ForegroundColor Cyan
+    } else {
+        Write-Host "[= $Bit-bit] Already registered: $DllPath"
     }
 }
 
 # -------------------------
-# Main: registry backup gate
+# Admin + backup gate
 # -------------------------
+if (-not (Test-IsAdmin)) {
+    Write-Host "ERROR: Administrator privileges required." -ForegroundColor Red
+    Read-Host "Press Enter to exit"
+    exit 1
+}
+
 $RegistryBackupEnabled = Test-RegistryBackupEnabled
-if (-not $RegistryBackupEnabled) {
-    Write-Host "Registry automatic backup not detected." -ForegroundColor Yellow
-    $ans = Read-Host "Attempt to enable automatic registry backup now? (Y/N)"
-    if ($ans -match '^[Yy]$') {
-        if (Try-EnableRegistryBackup) {
-            $RegistryBackupEnabled = $true
-        } else {
-            Write-Host "Backup not confirmed; destructive operations will be skipped." -ForegroundColor Yellow
-        }
-    } else {
-        Write-Host "Proceeding in SAFE mode (no destructive registry changes)." -ForegroundColor Yellow
-    }
+if ($RegistryBackupEnabled) {
+    Write-Host "Registry backup detected. Full operations enabled." -ForegroundColor Green
 } else {
-    Write-Host "Registry automatic backup detected — destructive fixes allowed." -ForegroundColor Green
+    Write-Host "WARNING: Registry backup not detected." -ForegroundColor Yellow
+    $ans = Read-Host "Enable automatic registry backup now? (Y/N)"
+    if ($ans -match '^[Yy]$' -and (Try-EnableRegistryBackup)) {
+        $RegistryBackupEnabled = $true
+        Write-Host "Registry backup confirmed." -ForegroundColor Green
+    } else {
+        Write-Host "SAFE mode active: registry will not be modified." -ForegroundColor Yellow
+    }
 }
 
 # -------------------------
 # Registry reconciliation
 # -------------------------
-Write-Host "`nScanning registry for invalid or misplaced entries..." -ForegroundColor Cyan
-
+Write-Host ""
+Write-Host "Scanning existing OpenCL ICD registry entries..."
 foreach ($bit in 64,32) {
-    $root = $roots[$bit.ToString()]
-    if ([string]::IsNullOrWhiteSpace($root)) { continue }
+    $root = $Roots[$bit]
     if (-not (Test-Path $root)) { continue }
 
-    $props = (Get-ItemProperty -Path $root -ErrorAction SilentlyContinue).PSObject.Properties
+    $props = (Get-ItemProperty $root).PSObject.Properties |
+             Where-Object { $_.MemberType -eq 'NoteProperty' }
+
     foreach ($p in $props) {
         $dll = $p.Name
         if ($dll -notlike "*amdocl*.dll") { continue }
 
         if (-not $RegistryBackupEnabled) {
-            Write-Host "SAFE mode: skipped $dll" -ForegroundColor Yellow
+            Write-Host "SAFE: skipped $dll"
             continue
         }
 
         if (-not (Test-Path $dll)) {
             Write-Host "Removed (missing): $dll" -ForegroundColor Yellow
-            Remove-ItemProperty -Path $root -Name $dll -Force -ErrorAction SilentlyContinue
+            Remove-ItemProperty -Path $root -Name $dll -Force
             continue
         }
 
-        $sig = Get-AuthenticodeSignature $dll -ErrorAction SilentlyContinue
+        $sig = Get-AuthenticodeSignature $dll
         if (-not (Is-AcceptableSignature $sig)) {
             Write-Host "Removed (signature): $dll" -ForegroundColor Yellow
-            Remove-ItemProperty -Path $root -Name $dll -Force -ErrorAction SilentlyContinue
+            Remove-ItemProperty -Path $root -Name $dll -Force
             continue
         }
 
         $realBit = Get-DllBitness $dll
         if ($realBit -and $realBit -ne $bit) {
-            Write-Host "Moved ($realBit bit): $dll" -ForegroundColor Yellow
-            Remove-ItemProperty -Path $root -Name $dll -Force -ErrorAction SilentlyContinue
+            Write-Host "Moved to $realBit-bit hive: $dll" -ForegroundColor Yellow
+            Remove-ItemProperty -Path $root -Name $dll -Force
             Ensure-Registry $realBit $dll
         }
     }
 }
 
 # -------------------------
-# Standard locations scan
+# Standard scan
 # -------------------------
-Write-Host "`nRegistering AMD OpenCL DLLs from standard locations..." -ForegroundColor Cyan
-
-foreach ($dir in $scanDirs) {
+Write-Host ""
+Write-Host "Scanning standard locations for AMD OpenCL DLLs..."
+foreach ($dir in $ScanDirs) {
     if (-not (Test-Path $dir)) { continue }
-    Get-ChildItem -Path $dir -Filter "amdocl*.dll" -Recurse -ErrorAction SilentlyContinue |
+    Get-ChildItem $dir -Filter "amdocl*.dll" -Recurse -ErrorAction SilentlyContinue |
         ForEach-Object {
-            $sig = Get-AuthenticodeSignature $_.FullName -ErrorAction SilentlyContinue
+            $sig = Get-AuthenticodeSignature $_.FullName
             if (-not (Is-AcceptableSignature $sig)) { return }
             $bit = Get-DllBitness $_.FullName
             if ($bit) { Ensure-Registry $bit $_.FullName }
@@ -242,14 +226,15 @@ foreach ($dir in $scanDirs) {
 }
 
 # -------------------------
-# Optional PATH scan
+# PATH scan
 # -------------------------
-Write-Host "`nDo you want to scan PATH directories as well? (Y/N)" -ForegroundColor Yellow
-if ((Read-Host) -match '^[Yy]$') {
+Write-Host ""
+$ans = Read-Host "Scan PATH directories as well? (Y/N)"
+if ($ans -match '^[Yy]$') {
     foreach ($p in ($env:PATH -split ';' | Where-Object { Test-Path $_ })) {
-        Get-ChildItem -Path $p -Filter "amdocl*.dll" -ErrorAction SilentlyContinue |
+        Get-ChildItem $p -Filter "amdocl*.dll" -ErrorAction SilentlyContinue |
             ForEach-Object {
-                $sig = Get-AuthenticodeSignature $_.FullName -ErrorAction SilentlyContinue
+                $sig = Get-AuthenticodeSignature $_.FullName
                 if (-not (Is-AcceptableSignature $sig)) { return }
                 $bit = Get-DllBitness $_.FullName
                 if ($bit) { Ensure-Registry $bit $_.FullName }
@@ -257,5 +242,6 @@ if ((Read-Host) -match '^[Yy]$') {
     }
 }
 
-Write-Host "`nCompleted." -ForegroundColor Green
+Write-Host ""
+Write-Host "Completed." -ForegroundColor Green
 Read-Host "Press Enter to exit"
