@@ -10,9 +10,9 @@ echo.
 echo.
 
 REM ============================================================
-REM Privilege check
+REM Privilege check (robust, UAC-safe)
 REM ============================================================
-net session >nul 2>&1
+fsutil dirty query %systemdrive% >nul 2>&1
 if errorlevel 1 goto :noAdmin
 goto :continue
 
