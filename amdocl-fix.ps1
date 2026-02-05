@@ -41,6 +41,11 @@ $ScanDirs = @(
 )
 
 # -------------------------
+# Dedup table (prevents duplicate registrations in same run)
+# -------------------------
+$Global:RegisteredSeen = [System.Collections.Generic.HashSet[string]]::new()
+
+# -------------------------
 # Helpers
 # -------------------------
 function Test-IsAdmin {
@@ -135,12 +140,28 @@ function Ensure-Registry {
         Write-Host "Created registry key: $Root"
     }
 
-    if (-not (Get-ItemPropertyValue -Path $Root -Name $DllPath -ErrorAction SilentlyContinue)) {
-        New-ItemProperty -Path $Root -Name $DllPath -Value 0 -PropertyType DWord -Force | Out-Null
-        Write-Host "[+ $Bit-bit] Registered: $DllPath" -ForegroundColor Cyan
-    } else {
-        Write-Host "[= $Bit-bit] Already registered: $DllPath"
+    # dedup in-memory
+    if ($Global:RegisteredSeen.Contains($DllPath)) {
+        Write-Host "[=] Skipping duplicate (already processed): $DllPath"
+        return
     }
+
+    # safe property check
+    $props = (Get-ItemProperty -Path $Root -ErrorAction SilentlyContinue).PSObject.Properties
+    $exists = $props | Where-Object { $_.Name -eq $DllPath } | Select-Object -First 1
+
+    if ($exists) {
+        Write-Host "[= $Bit-bit] Already registered: $DllPath"
+    } else {
+        try {
+            New-ItemProperty -Path $Root -Name $DllPath -Value 0 -PropertyType DWord -Force | Out-Null
+            Write-Host "[+ $Bit-bit] Registered: $DllPath" -ForegroundColor Cyan
+        } catch {
+            Write-Host "Failed to register $DllPath under $Root: $_" -ForegroundColor Yellow
+        }
+    }
+
+    $Global:RegisteredSeen.Add($DllPath) | Out-Null
 }
 
 # -------------------------
