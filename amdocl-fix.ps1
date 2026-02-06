@@ -10,7 +10,7 @@
 
 Write-Host "OpenCL Driver (ICD) Fix for AMD GPUs"
 Write-Host "Original batch by Patrick Trumpis (https://github.com/ptrumpis/OpenCL-AMD-GPU)"
-Write-Host "Powershell implementation by TantalusDrive (https://github.com/TantalusDrive)
+Write-Host "Powershell implementation by TantalusDrive (https://github.com/TantalusDrive)"
 Write-Host "Inspired by https://stackoverflow.com/a/28407851"
 Write-Host ""
 Write-Host ""
@@ -126,7 +126,7 @@ foreach ($root in $roots) {
 
         $correctRoot = if ($bit -eq 64) { $roots[0] } else { $roots[1] }
         if ($correctRoot -ne $root) {
-            Write-Host "Moved ($($bit) bit): $dll" -ForegroundColor Yellow
+            Write-Host "Moved ($bit bit): $dll" -ForegroundColor Yellow
             Safe-Remove $root $dll
             $existsDest = (Get-ItemProperty -Path $correctRoot -ErrorAction SilentlyContinue).PSObject.Properties |
                           Where-Object { $_.Name -eq $dll }
