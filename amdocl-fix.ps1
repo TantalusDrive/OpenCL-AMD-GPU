@@ -82,38 +82,46 @@ function Register-OpenCLDLL {
               Where-Object { $_.Name -eq $dllPath }
     if (-not $exists) {
         Safe-Add $root $dllPath
-        Write-Host "[+ $bit bit] Added: $dllPath" -ForegroundColor Cyan
+        Write-Host "Registered: $dllPath" -ForegroundColor Green
+    } else {
+        Write-Host "Already present: $dllPath"
     }
 }
 
-# Registry cleanup: remove invalid, missing, or misplaced entries
+# ============================================================
+# Registry reconciliation
+# ============================================================
 foreach ($root in $roots) {
-    Write-Host "`nAnalyzing: $root" -ForegroundColor Cyan
+    Write-Host "`nAnalyzing: $root"
     $entries = Get-ItemProperty -Path $root -ErrorAction SilentlyContinue
     if (-not $entries) {
-        Write-Host "No entries found or key missing."
+        Write-Host "(none)"
         continue
     }
     foreach ($prop in $entries.PSObject.Properties) {
         $dll = $prop.Name
         if ($dll -notlike "*amdocl*.dll") { continue }
+
         if (-not (Test-Path $dll)) {
-            Write-Host "Removed: $dll (file not found)" -ForegroundColor Yellow
+            Write-Host "Removed: $dll (file not found)" -ForegroundColor Magenta
             Safe-Remove $root $dll
             continue
         }
+
         $sig = Get-AuthenticodeSignature -FilePath $dll
         if (-not (Is-SignatureAcceptable $sig $AllowUnsigned)) {
-            Write-Host "Removed: $dll (invalid signature)" -ForegroundColor Yellow
+            Write-Host "Removed: $dll (invalid signature)" -ForegroundColor Magenta
             Safe-Remove $root $dll
             continue
         }
+
         $bit = Get-DllBitness $dll
         if ($bit -eq $null) {
-            Write-Host "Removed: $dll (architecture not detected)" -ForegroundColor Yellow
+            Write-Host "Removed: $dll (architecture not detected)" -ForegroundColor Magenta
             Safe-Remove $root $dll
             continue
         }
+
         $correctRoot = if ($bit -eq 64) { $roots[0] } else { $roots[1] }
         if ($correctRoot -ne $root) {
             Write-Host "Moved ($bit bit): $dll" -ForegroundColor Yellow
@@ -125,33 +133,49 @@ foreach ($root in $roots) {
             }
             continue
         }
+
         Write-Host "OK: $dll" -ForegroundColor Green
     }
 }
 
-# Register all valid DLLs found in each directory (no duplicates)
-Write-Host "`nRegistering all valid AMD OpenCL DLLs from standard directories..." -ForegroundColor Cyan
+# ============================================================
+# Fast Scan (standard directories)
+# ============================================================
+Write-Host "`nThis script will now attempt to find and install unregistered OpenCL AMD drivers (Fast Scan)."
+$input = Read-Host "Do you want to continue? (Y/N)"
+if ($input -eq 'Y' -or $input -eq 'y') {
 
-foreach ($dir in $scanDirs) {
-    if (-not (Test-Path $dir)) { continue }
-    Get-ChildItem -Path $dir -Filter "amdocl*.dll" -Recurse -ErrorAction SilentlyContinue |
-        Where-Object { $_.VersionInfo.FileVersionRaw } |
-        ForEach-Object {
-            Register-OpenCLDLL -dllPath $_.FullName -AllowUnsigned:$AllowUnsigned
+    Write-Host "Running AMD OpenCL Driver Auto Detection"
+    Write-Host "========================================"
+
+    foreach ($dir in $scanDirs) {
+        if (-not (Test-Path $dir)) { continue }
+        Write-Host "Scanning '$dir' for 'amdocl*.dll' files..."
+        Get-ChildItem -Path $dir -Filter "amdocl*.dll" -Recurse -ErrorAction SilentlyContinue |
+            Where-Object { $_.VersionInfo.FileVersionRaw } |
+            ForEach-Object {
+                Register-OpenCLDLL -dllPath $_.FullName -AllowUnsigned:$AllowUnsigned
         }
 }
 
-if ($hadErrors) {
-    Write-Host "`nCompleted with warnings." -ForegroundColor Yellow
+Write-Host "`nFast Scan complete." -ForegroundColor Cyan
+
 } else {
-    Write-Host "`nCompleted." -ForegroundColor Green
+    Write-Host "`nFast Scan skipped."
 }
 
-# Optional PATH scan
-Write-Host "`nDo you want to include an extended scan of system PATH directories? (Recommended only for custom or unofficial DLLs)" -ForegroundColor Yellow
-$input = Read-Host "Type Y to scan, anything else to skip"
+# ============================================================
+# Full Scan (PATH)
+# ============================================================
+Write-Host "`nThis script will now attempt a Full Scan (PATH)."
+Write-Host "(Recommended only for custom or unofficial DLLs)" -ForegroundColor Yellow
+$input = Read-Host "Do you want to continue? (Y/N)"
 if ($input -eq 'Y' -or $input -eq 'y') {
-    Write-Host "`nNote: DLLs found in PATH may be unofficial or obsolete." -ForegroundColor Magenta
+
+    Write-Host "`nNow scanning your PATH for 'amdocl*.dll' files..."
+    Write-Host "Note: DLLs found in PATH may be unofficial or obsolete." -ForegroundColor Yellow
+    Write-Host "==================================================="
+
     $pathDirs = ($env:PATH -split ';' | Where-Object { Test-Path $_ })
     foreach ($dir in $pathDirs) {
         Get-ChildItem -Path $dir -Filter "amdocl*.dll" -Recurse -ErrorAction SilentlyContinue |
@@ -160,9 +184,16 @@ if ($input -eq 'Y' -or $input -eq 'y') {
                 Register-OpenCLDLL -dllPath $_.FullName -AllowUnsigned:$AllowUnsigned
             }
     }
-    Write-Host "`nPATH scan completed." -ForegroundColor Cyan
+
+    Write-Host "`nFull Scan complete." -ForegroundColor Cyan
 } else {
-    Write-Host "`nPATH scan skipped."
+    Write-Host "`nFull Scan skipped."
+}
+
+if ($hadErrors) {
+    Write-Host "`nCompleted with warnings." -ForegroundColor Yellow
+} else {
+    Write-Host "`nDone."
 }
 
 Read-Host "Press Enter to exit"
