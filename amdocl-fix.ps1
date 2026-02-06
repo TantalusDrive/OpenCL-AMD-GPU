@@ -8,16 +8,16 @@
 # Licensed under the MIT License.
 # See LICENSE file in the repository root for full terms.
 
-Write-Host "OpenCL Driver (ICD) Fix for AMD GPUs"
-Write-Host "Original batch by Patrick Trumpis (https://github.com/ptrumpis/OpenCL-AMD-GPU)"
-Write-Host "Powershell implementation by TantalusDrive (https://github.com/TantalusDrive)"
-Write-Host "Inspired by https://stackoverflow.com/a/28407851"
-Write-Host ""
-Write-Host ""
-
 param(
-    [switch]$AllowUnsigned = $true
+    [bool]$AllowUnsigned = $true
 )
+
+Write-Host "OpenCL Driver (ICD) Fix for AMD GPUs" -ForegroundColor Cyan
+Write-Host "Original batch by Patrick Trumpis (https://github.com/ptrumpis/OpenCL-AMD-GPU)" -ForegroundColor Cyan
+Write-Host "Powershell implementation by TantalusDrive (https://github.com/TantalusDrive)" -ForegroundColor Cyan
+Write-Host "Inspired by https://stackoverflow.com/a/28407851" -ForegroundColor Cyan
+Write-Host ""
+Write-Host ""
 
 $roots = @(
     "HKLM:\SOFTWARE\Khronos\OpenCL\Vendors",
@@ -52,7 +52,7 @@ function Get-DllBitness {
 
 function Safe-Remove {
     param($root,$name)
-    try { Remove-ItemProperty -Path $root -Name $name -Force }
+    try { Remove-ItemProperty -Path $root -Name $name -Force -ErrorAction SilentlyContinue }
     catch { $global:hadErrors = $true }
 }
 
@@ -64,6 +64,7 @@ function Safe-Add {
 
 function Is-SignatureAcceptable {
     param($sig, $AllowUnsigned)
+    if (-not $sig) { return $false }
     if ($sig.Status -eq 'Valid') { return $true }
     if ($AllowUnsigned -and ($sig.Status -eq 'NotSigned' -or $sig.Status -eq 'Unknown')) {
         return $true
@@ -72,14 +73,14 @@ function Is-SignatureAcceptable {
 }
 
 function Register-OpenCLDLL {
-    param([string]$dllPath, [switch]$AllowUnsigned)
+    param([string]$dllPath, [bool]$AllowUnsigned)
     if (-not (Test-Path $dllPath)) { return }
-    $sig = Get-AuthenticodeSignature -FilePath $dllPath
+    $sig = Get-AuthenticodeSignature -FilePath $dllPath -ErrorAction SilentlyContinue
     if (-not (Is-SignatureAcceptable $sig $AllowUnsigned)) { return }
     $bit = Get-DllBitness $dllPath
     if ($bit -eq 64)      { $root = $roots[0] }
-    elseif ($bit -eq 32) { $root = $roots[1] }
-    else                 { return }
+    elseif ($bit -eq 32)   { $root = $roots[1] }
+    else                   { return }
     $exists = (Get-ItemProperty -Path $root -ErrorAction SilentlyContinue).PSObject.Properties |
               Where-Object { $_.Name -eq $dllPath }
     if (-not $exists) {
@@ -110,7 +111,7 @@ foreach ($root in $roots) {
             continue
         }
 
-        $sig = Get-AuthenticodeSignature -FilePath $dll
+        $sig = Get-AuthenticodeSignature -FilePath $dll -ErrorAction SilentlyContinue
         if (-not (Is-SignatureAcceptable $sig $AllowUnsigned)) {
             Write-Host "Removed: $dll (invalid signature)" -ForegroundColor Magenta
             Safe-Remove $root $dll
@@ -126,7 +127,7 @@ foreach ($root in $roots) {
 
         $correctRoot = if ($bit -eq 64) { $roots[0] } else { $roots[1] }
         if ($correctRoot -ne $root) {
-            Write-Host "Moved ($bit bit): $dll" -ForegroundColor Yellow
+            Write-Host "Moved ($($bit) bit): $dll" -ForegroundColor Yellow
             Safe-Remove $root $dll
             $existsDest = (Get-ItemProperty -Path $correctRoot -ErrorAction SilentlyContinue).PSObject.Properties |
                           Where-Object { $_.Name -eq $dll }
@@ -147,7 +148,7 @@ Write-Host "`nThis script will now attempt to find and install unregistered Open
 $input = Read-Host "Do you want to continue? (Y/N)"
 if ($input -eq 'Y' -or $input -eq 'y') {
 
-    Write-Host "Running AMD OpenCL Driver Auto Detection"
+    Write-Host "`nRunning AMD OpenCL Driver Auto Detection"
     Write-Host "========================================"
 
     foreach ($dir in $scanDirs) {
@@ -157,10 +158,10 @@ if ($input -eq 'Y' -or $input -eq 'y') {
             Where-Object { $_.VersionInfo.FileVersionRaw } |
             ForEach-Object {
                 Register-OpenCLDLL -dllPath $_.FullName -AllowUnsigned:$AllowUnsigned
-        }
-}
+            }
+    }
 
-Write-Host "`nFast Scan complete." -ForegroundColor Cyan
+    Write-Host "`nFast Scan complete." -ForegroundColor Cyan
 
 } else {
     Write-Host "`nFast Scan skipped."
