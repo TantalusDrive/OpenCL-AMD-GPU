@@ -1,17 +1,19 @@
-# PowerShell script to manage and fix AMD OpenCL ICDs
-#
-# Original batch concept: Patrick Trumpis (https://github.com/ptrumpis/OpenCL-AMD-GPU)
-# PowerShell implementation and extensions: TantalusDrive (https://github.com/TantalusDrive)
-#
-# Licensed under the MIT License.
-# See LICENSE file in the repository root for full terms.
-#
 # This PowerShell script extends the original batch by safely cleaning up
 # invalid or misplaced registry entries and coherently registering AMD
 # OpenCL DLLs in the correct 32-bit or 64-bit hive, and providing detailed status output.
 # By default, unsigned DLLs are allowed to prevent accidental removal.
 #
 # Tested on a couple of dated AMD GPUs (R5 M330, R5 M430), feedback and contributions are welcome.
+#
+# Licensed under the MIT License.
+# See LICENSE file in the repository root for full terms.
+
+Write-Host "OpenCL Driver (ICD) Fix for AMD GPUs"
+Write-Host "Original batch by Patrick Trumpis (https://github.com/ptrumpis/OpenCL-AMD-GPU)"
+Write-Host "Powershell implementation by TantalusDrive (https://github.com/TantalusDrive)
+Write-Host "Inspired by https://stackoverflow.com/a/28407851"
+Write-Host ""
+Write-Host ""
 
 param(
     [switch]$AllowUnsigned = $true
