@@ -126,7 +126,7 @@ foreach ($root in $roots) {
 
         $correctRoot = if ($bit -eq 64) { $roots[0] } else { $roots[1] }
         if ($correctRoot -ne $root) {
-            Write-Host "Moved ($bit` bit): $dll" -ForegroundColor Yellow
+            Write-Host "Moved ($($bit) bit): $dll" -ForegroundColor Yellow
             Safe-Remove $root $dll
             $existsDest = (Get-ItemProperty -Path $correctRoot -ErrorAction SilentlyContinue).PSObject.Properties |
                           Where-Object { $_.Name -eq $dll }
