@@ -1,9 +1,3 @@
-# Original batch concept: Patrick Trumpis (https://github.com/ptrumpis/OpenCL-AMD-GPU)
-# PowerShell implementation and extensions: TantalusDrive (https://github.com/TantalusDrive)
-#
-# Licensed under the MIT License
-# (See LICENSE file in the repository root for full terms)
-#
 # This PowerShell script extends the original batch by safely cleaning up invalid or misplaced
 # registry entries and coherently registering AMD OpenCL DLLs in the correct 32-bit or 64-bit hive,
 # while providing detailed and transparent status output.
@@ -14,6 +8,9 @@
 # Risky registry operations are gated on evidence of registry backups (RegBack).
 #
 # Tested on older AMD GPUs (R5 M330, R5 M430). Feedback and contributions are welcome.
+#
+# Licensed under the MIT License
+# (See LICENSE file in the repository root for full terms)
 
 param(
     [switch]$AllowUnsigned = $true
